@@ -1,0 +1,186 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import random
+import string
+
+# ===== Panini-inspired Rule-based Word Generator (Simplified) =====
+class PaniniRuleGenerator:
+    """
+    Generates words using a simplified Panini grammar rule system.
+    Rules take a root word and apply morphological suffixes or transformations.
+    Note: This is a simplistic placeholder representation.
+    """
+    def __init__(self):
+        # Example suffixes or transformations inspired by morphological rules
+        self.suffixes = ['a', 'am', 'ah', 'asya', 'inam']
+        self.transformations = {
+            'k': 'c',  # Example phonetic transformation: k -> c
+            'g': 'j',  # g -> j
+            't': 'd'   # t -> d
+        }
+
+    def apply_rules(self, root):
+        # Apply one random suffix and probabilistic transformation
+        suffix = random.choice(self.suffixes)
+        transformed_root = ''.join([self.transformations.get(ch, ch) for ch in root])
+        generated_word = transformed_root + suffix
+        return generated_word
+
+    def generate_sentence(self, roots, length=5):
+        # Generate a sentence of given length from supplied root words
+        sentence = []
+        for _ in range(length):
+            root = random.choice(roots)
+            word = self.apply_rules(root)
+            sentence.append(word)
+        return ' '.join(sentence)
+
+
+# ===== Simple Generator and Discriminator for Text GAN =====
+# Using Embeddings + simple GRU for demonstration
+
+VOCAB = list(string.ascii_lowercase) + [' ']
+CHAR_TO_IDX = {c:i for i,c in enumerate(VOCAB)}
+IDX_TO_CHAR = {i:c for i,c in enumerate(VOCAB)}
+
+SEQ_LEN = 20  # length of generated text sequences
+
+
+class Generator(nn.Module):
+    def __init__(self, latent_dim, embed_dim, hidden_dim, vocab_size):
+        super().__init__()
+        self.latent_dim = latent_dim
+        self.embed_dim = embed_dim
+        self.hidden_dim = hidden_dim
+        self.vocab_size = vocab_size
+
+        self.embedding = nn.Embedding(vocab_size, embed_dim)
+        self.gru = nn.GRU(embed_dim, hidden_dim, batch_first=True)
+        self.linear = nn.Linear(hidden_dim, vocab_size)
+
+    def forward(self, noise):
+        # noise shape: (batch_size, seq_len)
+        embedded = self.embedding(noise)
+        output, _ = self.gru(embedded)
+        logits = self.linear(output)
+        return logits
+
+
+class Discriminator(nn.Module):
+    def __init__(self, embed_dim, hidden_dim, vocab_size):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, embed_dim)
+        self.gru = nn.GRU(embed_dim, hidden_dim, batch_first=True)
+        self.linear = nn.Linear(hidden_dim, 1)
+
+    def forward(self, x):
+        embedded = self.embedding(x)
+        output, _ = self.gru(embedded)
+        # Use last hidden state
+        last_output = output[:, -1, :]
+        out = torch.sigmoid(self.linear(last_output))
+        return out.squeeze()
+
+
+# ===== LLM Trainer Placeholder =====
+class LLMTrainer:
+    def __init__(self):
+        # Placeholder for autoregressive training with synthetic data
+        self.loss_fn = nn.CrossEntropyLoss()
+        # Could include pretrained weights, complex transformer etc.
+
+    def train_on_batch(self, model, inputs, targets, optimizer):
+        model.train()
+        optimizer.zero_grad()
+        outputs = model(inputs)  # logits of shape (batch, seq_len, vocab_size)
+        # reshape for loss: (batch*seq_len, vocab_size)
+        loss = self.loss_fn(outputs.view(-1, outputs.size(-1)), targets.view(-1))
+        loss.backward()
+        optimizer.step()
+        return loss.item()
+
+
+# ===== Utilities =====
+def text_to_tensor(texts, seq_len=SEQ_LEN):
+    batch_size = len(texts)
+    tensor = torch.zeros((batch_size, seq_len), dtype=torch.long)
+    for i, text in enumerate(texts):
+        for j, c in enumerate(text[:seq_len]):
+            tensor[i, j] = CHAR_TO_IDX.get(c, 0)
+    return tensor
+
+
+def tensor_to_text(tensor):
+    texts = []
+    for seq in tensor:
+        texts.append(''.join(IDX_TO_CHAR[i.item()] for i in seq))
+    return texts
+
+
+# ===== Training Loop Example =====
+def train_gan(panini_gen, generator, discriminator, llm_trainer,
+              g_optimizer, d_optimizer, epochs=100, batch_size=16, device='cpu'):
+    for epoch in range(epochs):
+        # Generate synthetic real sentences using Panini grammar rules
+        roots = ['kat', 'gat', 'pat', 'rat', 'sat']
+        real_texts = [panini_gen.generate_sentence(roots, length=SEQ_LEN//4) for _ in range(batch_size)]
+        real_tensors = text_to_tensor(real_texts).to(device)
+
+        # Train Discriminator
+        discriminator.train()
+        g_optimizer.zero_grad()
+        d_optimizer.zero_grad()
+
+        # Real data
+        real_preds = discriminator(real_tensors)
+        real_labels = torch.ones_like(real_preds, device=device)
+        loss_real = nn.BCELoss()(real_preds, real_labels)
+
+        # Fake data sampling (noise as random sequences)
+        noise = torch.randint(0, len(VOCAB), (batch_size, SEQ_LEN), device=device)
+        fake_logits = generator(noise).argmax(dim=-1)
+        fake_preds = discriminator(fake_logits.detach())
+        fake_labels = torch.zeros_like(fake_preds, device=device)
+        loss_fake = nn.BCELoss()(fake_preds, fake_labels)
+
+        loss_discriminator = loss_real + loss_fake
+        loss_discriminator.backward()
+        d_optimizer.step()
+
+        # Train Generator
+        g_optimizer.zero_grad()
+        fake_preds_for_g = discriminator(fake_logits)
+        # Generator tries to fool discriminator
+        gen_loss = nn.BCELoss()(fake_preds_for_g, real_labels)
+        gen_loss.backward()
+        g_optimizer.step()
+
+        # Optionally train LLM trainer on synthetic + generated sentences (simplified)
+        # Here, just a placeholder call to train on real_tensors
+        # targets are next token prediction shifted by one; simplified as random for now
+        dummy_targets = torch.roll(real_tensors, shifts=-1, dims=1)
+        llm_loss = llm_trainer.train_on_batch(generator, real_tensors, dummy_targets, g_optimizer)
+
+        if epoch % 10 == 0 or epoch == epochs - 1:
+            print(f"Epoch {epoch}/{epochs}: D_loss={loss_discriminator.item():.4f}, G_loss={gen_loss.item():.4f}, LLM_loss={llm_loss:.4f}")
+
+
+# ===== Integration and Run Example =====
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+panini_generator = PaniniRuleGenerator()
+latent_dim = SEQ_LEN
+embed_dim = 32
+hidden_dim = 64
+vocab_size = len(VOCAB)
+
+generator = Generator(latent_dim, embed_dim, hidden_dim, vocab_size).to(device)
+discriminator = Discriminator(embed_dim, hidden_dim, vocab_size).to(device)
+llm_trainer = LLMTrainer()
+
+g_optimizer = optim.Adam(generator.parameters(), lr=0.001)
+d_optimizer = optim.Adam(discriminator.parameters(), lr=0.001)
+
+train_gan(panini_generator, generator, discriminator, llm_trainer,
+          g_optimizer, d_optimizer, epochs=50, batch_size=32, device=device)
